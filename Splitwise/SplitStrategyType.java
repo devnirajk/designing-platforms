@@ -1,0 +1,4 @@
+enum SplitStrategyType {
+    EQUALLY,
+    PERCENTWISE;
+}
