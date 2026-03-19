@@ -1,0 +1,852 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Logging System - Low Level Design</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --surface2: #232733;
+    --border: #2e3345;
+    --text: #e1e4ed;
+    --text-muted: #8b90a0;
+    --accent: #6c8cff;
+    --accent2: #a78bfa;
+    --green: #4ade80;
+    --orange: #fb923c;
+    --red: #f87171;
+    --yellow: #facc15;
+    --cyan: #22d3ee;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:var(--bg); color:var(--text); font-family:'Inter','Segoe UI',system-ui,sans-serif; line-height:1.7; }
+
+  .container { max-width:1100px; margin:0 auto; padding:2rem 1.5rem; }
+
+  h1 { font-size:2.4rem; font-weight:800; background:linear-gradient(135deg,var(--accent),var(--accent2)); -webkit-background-clip:text; -webkit-text-fill-color:transparent; margin-bottom:.5rem; }
+  h2 { font-size:1.5rem; font-weight:700; color:var(--accent); margin:2.5rem 0 1rem; border-left:4px solid var(--accent); padding-left:12px; }
+  h3 { font-size:1.15rem; font-weight:600; color:var(--accent2); margin:1.5rem 0 .75rem; }
+  p, li { color:var(--text-muted); font-size:.95rem; }
+  p { margin-bottom:.75rem; }
+  ul { padding-left:1.5rem; margin-bottom:1rem; }
+  li { margin-bottom:.35rem; }
+  strong { color:var(--text); }
+  a { color:var(--accent); }
+
+  .subtitle { color:var(--text-muted); font-size:1.1rem; margin-bottom:2rem; }
+
+  .card { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:1.5rem; margin-bottom:1.5rem; }
+  .card-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:1rem; margin-bottom:1.5rem; }
+
+  .badge { display:inline-block; padding:3px 10px; border-radius:20px; font-size:.75rem; font-weight:600; margin-right:6px; }
+  .badge-singleton { background:#6c8cff22; color:var(--accent); border:1px solid #6c8cff44; }
+  .badge-strategy { background:#a78bfa22; color:var(--accent2); border:1px solid #a78bfa44; }
+  .badge-observer { background:#4ade8022; color:var(--green); border:1px solid #4ade8044; }
+  .badge-producer { background:#fb923c22; color:var(--orange); border:1px solid #fb923c44; }
+
+  /* Code blocks */
+  pre { background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:1rem 1.25rem; overflow-x:auto; margin-bottom:1rem; font-size:.85rem; line-height:1.6; }
+  code { font-family:'JetBrains Mono','Fira Code',monospace; }
+  .kw { color:#c792ea; }
+  .type { color:#82aaff; }
+  .str { color:#c3e88d; }
+  .cm { color:#546e7a; }
+  .fn { color:#82aaff; }
+  .num { color:#f78c6c; }
+  .ann { color:#ffcb6b; }
+
+  /* Comparison table */
+  table { width:100%; border-collapse:collapse; margin-bottom:1rem; font-size:.9rem; }
+  th { background:var(--surface2); color:var(--accent); text-align:left; padding:10px 14px; border-bottom:2px solid var(--border); }
+  td { padding:10px 14px; border-bottom:1px solid var(--border); color:var(--text-muted); }
+  tr:hover td { background:var(--surface2); }
+
+  /* HLD Animation */
+  .hld-container { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:2rem; margin:1.5rem 0; position:relative; overflow:hidden; min-height:420px; }
+  .hld-controls { display:flex; gap:.75rem; margin-bottom:1.5rem; flex-wrap:wrap; }
+  .hld-btn { padding:8px 20px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:8px; cursor:pointer; font-size:.85rem; font-weight:600; transition:all .2s; }
+  .hld-btn:hover { border-color:var(--accent); background:#6c8cff15; }
+  .hld-btn.active { border-color:var(--accent); background:#6c8cff25; color:var(--accent); }
+
+  .arch-svg { width:100%; height:340px; }
+  .arch-svg text { font-family:'Inter','Segoe UI',system-ui,sans-serif; }
+
+  /* Log message animation */
+  @keyframes moveRight { 0%{opacity:0;transform:translateX(-20px)} 20%{opacity:1} 80%{opacity:1} 100%{opacity:0;transform:translateX(20px)} }
+  @keyframes pulse { 0%,100%{opacity:.6} 50%{opacity:1} }
+  @keyframes fadeInUp { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:translateY(0)} }
+  .animate-msg { animation: moveRight 2s ease-in-out infinite; }
+  .pulse { animation: pulse 2s ease-in-out infinite; }
+
+  /* Queue visualization */
+  .queue-viz { display:flex; align-items:center; gap:6px; margin:1rem 0; flex-wrap:wrap; }
+  .queue-slot { width:80px; height:36px; border:2px solid var(--border); border-radius:6px; display:flex; align-items:center; justify-content:center; font-size:.7rem; font-weight:600; color:var(--text-muted); transition:all .4s; }
+  .queue-slot.filled { border-color:var(--accent); background:#6c8cff20; color:var(--accent); }
+  .queue-slot.consuming { border-color:var(--green); background:#4ade8020; color:var(--green); }
+  .queue-arrow { color:var(--text-muted); font-size:1.2rem; }
+
+  /* Live demo */
+  .demo-area { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:1.5rem; margin:1.5rem 0; }
+  .demo-controls { display:flex; gap:.5rem; margin-bottom:1rem; flex-wrap:wrap; }
+  .demo-btn { padding:6px 14px; border:none; border-radius:6px; cursor:pointer; font-size:.8rem; font-weight:600; transition:all .2s; }
+  .demo-btn.debug { background:#6c8cff30; color:var(--accent); }
+  .demo-btn.info { background:#4ade8030; color:var(--green); }
+  .demo-btn.warn { background:#facc1530; color:var(--yellow); }
+  .demo-btn.error { background:#fb923c30; color:var(--orange); }
+  .demo-btn.fatal { background:#f8717130; color:var(--red); }
+  .demo-btn:hover { filter:brightness(1.3); }
+  .demo-select { background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:6px 10px; font-size:.8rem; }
+  .log-output { background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:1rem; min-height:120px; max-height:250px; overflow-y:auto; font-family:'JetBrains Mono',monospace; font-size:.78rem; line-height:1.8; }
+  .log-line { animation:fadeInUp .3s ease-out; }
+  .log-line.debug { color:var(--accent); }
+  .log-line.info { color:var(--green); }
+  .log-line.warn { color:var(--yellow); }
+  .log-line.error { color:var(--orange); }
+  .log-line.fatal { color:var(--red); }
+  .log-line.filtered { color:var(--text-muted); opacity:.4; text-decoration:line-through; }
+
+  /* Flow steps */
+  .flow-step { display:flex; align-items:flex-start; gap:1rem; margin-bottom:1rem; }
+  .flow-num { min-width:32px; height:32px; background:var(--accent); color:var(--bg); border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:.85rem; }
+  .flow-content { flex:1; }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width:6px; height:6px; }
+  ::-webkit-scrollbar-track { background:var(--bg); }
+  ::-webkit-scrollbar-thumb { background:var(--border); border-radius:3px; }
+
+  .toc { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:1.25rem 1.5rem; margin-bottom:2rem; }
+  .toc-title { font-weight:700; color:var(--text); margin-bottom:.5rem; }
+  .toc a { color:var(--text-muted); text-decoration:none; font-size:.9rem; display:block; padding:3px 0; transition:color .2s; }
+  .toc a:hover { color:var(--accent); }
+</style>
+</head>
+<body>
+<div class="container">
+
+<!-- Header -->
+<h1>Logging System - Low Level Design</h1>
+<p class="subtitle">A thread-safe, extensible logging framework with async I/O, level-based filtering, and pluggable sinks.</p>
+
+<div style="display:flex;gap:8px;margin-bottom:2rem;flex-wrap:wrap">
+  <span class="badge badge-singleton">Singleton Pattern</span>
+  <span class="badge badge-strategy">Strategy Pattern</span>
+  <span class="badge badge-observer">Pub-Sub / Observer</span>
+  <span class="badge badge-producer">Producer-Consumer</span>
+</div>
+
+<!-- Table of Contents -->
+<div class="toc">
+  <div class="toc-title">Contents</div>
+  <a href="#requirements">1. Functional Requirements</a>
+  <a href="#hld">2. High-Level Architecture & Animation</a>
+  <a href="#patterns">3. Design Patterns Used</a>
+  <a href="#queue">4. Queue Choice: Why LinkedBlockingQueue?</a>
+  <a href="#classes">5. Class-by-Class Breakdown</a>
+  <a href="#flow">6. End-to-End Flow</a>
+  <a href="#demo">7. Interactive Demo</a>
+  <a href="#tradeoffs">8. Trade-offs & Interview Talking Points</a>
+</div>
+
+<!-- 1. Requirements -->
+<h2 id="requirements">1. Functional Requirements</h2>
+<div class="card-grid">
+  <div class="card">
+    <h3>Core Logging</h3>
+    <ul>
+      <li>Log messages with <strong>timestamp, level, TAG (class name), and message</strong></li>
+      <li>Support 5 levels: <strong>DEBUG, INFO, WARN, ERROR, FATAL</strong></li>
+      <li>Level-based <strong>filtering</strong> at initialization (e.g., set to WARN = only WARN, ERROR, FATAL pass through)</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h3>Multiple Sinks</h3>
+    <ul>
+      <li>Logs write to <strong>both file and console</strong></li>
+      <li>Sinks are <strong>pluggable</strong> via the <code>LogSink</code> interface</li>
+      <li>Adding a new destination (DB, remote server) requires <strong>zero changes</strong> to existing code</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h3>Thread Safety</h3>
+    <ul>
+      <li>Multiple threads can log <strong>simultaneously</strong></li>
+      <li>Caller thread should <strong>return immediately</strong> (non-blocking)</li>
+      <li>Actual writing happens on a <strong>separate consumer thread</strong></li>
+    </ul>
+  </div>
+  <div class="card">
+    <h3>Design Constraints</h3>
+    <ul>
+      <li><strong>Singleton</strong> Logger instance (thread-safe double-checked locking)</li>
+      <li><strong>Queue-based</strong> decoupling between producer and consumer</li>
+      <li><strong>No shared mutable state</strong> between caller threads</li>
+    </ul>
+  </div>
+</div>
+
+<!-- 2. HLD Animation -->
+<h2 id="hld">2. High-Level Architecture</h2>
+<p>Click the buttons to see how log messages flow through the system.</p>
+
+<div class="hld-container">
+  <div class="hld-controls">
+    <button class="hld-btn active" onclick="setAnimState('idle')">Idle</button>
+    <button class="hld-btn" onclick="setAnimState('produce')">Producer (Caller Thread)</button>
+    <button class="hld-btn" onclick="setAnimState('queue')">Queue (Buffer)</button>
+    <button class="hld-btn" onclick="setAnimState('dispatch')">Dispatcher (Consumer)</button>
+    <button class="hld-btn" onclick="setAnimState('sink')">Sinks (Write)</button>
+    <button class="hld-btn" onclick="setAnimState('full')">Full Flow</button>
+  </div>
+
+  <svg class="arch-svg" viewBox="0 0 900 320">
+    <!-- Thread boxes (producers) -->
+    <g id="g-producers">
+      <rect x="10" y="30" width="120" height="50" rx="8" fill="#1a1d27" stroke="#2e3345" stroke-width="2" id="prod1"/>
+      <text x="70" y="60" text-anchor="middle" fill="#8b90a0" font-size="13" font-weight="600">Thread 1</text>
+      <rect x="10" y="100" width="120" height="50" rx="8" fill="#1a1d27" stroke="#2e3345" stroke-width="2" id="prod2"/>
+      <text x="70" y="130" text-anchor="middle" fill="#8b90a0" font-size="13" font-weight="600">Thread 2</text>
+      <rect x="10" y="170" width="120" height="50" rx="8" fill="#1a1d27" stroke="#2e3345" stroke-width="2" id="prod3"/>
+      <text x="70" y="200" text-anchor="middle" fill="#8b90a0" font-size="13" font-weight="600">Thread N</text>
+    </g>
+
+    <!-- Logger box -->
+    <g id="g-logger">
+      <rect x="185" y="80" width="130" height="90" rx="10" fill="#1a1d27" stroke="#2e3345" stroke-width="2" id="logger-box"/>
+      <text x="250" y="115" text-anchor="middle" fill="#6c8cff" font-size="14" font-weight="700">Logger</text>
+      <text x="250" y="135" text-anchor="middle" fill="#546e7a" font-size="11">(Singleton)</text>
+      <text x="250" y="155" text-anchor="middle" fill="#546e7a" font-size="10">filter + enqueue</text>
+    </g>
+
+    <!-- Arrows: threads -> logger -->
+    <line x1="130" y1="55" x2="185" y2="110" stroke="#2e3345" stroke-width="2" id="arr-t1"/>
+    <line x1="130" y1="125" x2="185" y2="125" stroke="#2e3345" stroke-width="2" id="arr-t2"/>
+    <line x1="130" y1="195" x2="185" y2="140" stroke="#2e3345" stroke-width="2" id="arr-t3"/>
+
+    <!-- Queue box -->
+    <g id="g-queue">
+      <rect x="370" y="85" width="160" height="80" rx="10" fill="#1a1d27" stroke="#2e3345" stroke-width="2" id="queue-box"/>
+      <text x="450" y="115" text-anchor="middle" fill="#a78bfa" font-size="14" font-weight="700">BlockingQueue</text>
+      <text x="450" y="135" text-anchor="middle" fill="#546e7a" font-size="11">LinkedBlockingQueue</text>
+      <!-- Queue slots -->
+      <rect x="385" y="145" width="26" height="12" rx="3" fill="#6c8cff33" stroke="#6c8cff55" id="qs1"/>
+      <rect x="415" y="145" width="26" height="12" rx="3" fill="#6c8cff33" stroke="#6c8cff55" id="qs2"/>
+      <rect x="445" y="145" width="26" height="12" rx="3" fill="#6c8cff33" stroke="#6c8cff55" id="qs3"/>
+      <rect x="475" y="145" width="26" height="12" rx="3" fill="#2e3345" stroke="#2e334588" id="qs4"/>
+      <rect x="505" y="145" width="12" height="12" rx="3" fill="#2e3345" stroke="#2e334588"/>
+    </g>
+
+    <!-- Arrow: logger -> queue -->
+    <line x1="315" y1="125" x2="370" y2="125" stroke="#2e3345" stroke-width="2" marker-end="url(#arrowhead)" id="arr-lq"/>
+
+    <!-- Dispatcher box -->
+    <g id="g-dispatcher">
+      <rect x="585" y="80" width="130" height="90" rx="10" fill="#1a1d27" stroke="#2e3345" stroke-width="2" id="dispatch-box"/>
+      <text x="650" y="112" text-anchor="middle" fill="#22d3ee" font-size="14" font-weight="700">Dispatcher</text>
+      <text x="650" y="132" text-anchor="middle" fill="#546e7a" font-size="11">take() + fan-out</text>
+      <text x="650" y="150" text-anchor="middle" fill="#546e7a" font-size="10">Consumer Thread</text>
+    </g>
+
+    <!-- Arrow: queue -> dispatcher -->
+    <line x1="530" y1="125" x2="585" y2="125" stroke="#2e3345" stroke-width="2" marker-end="url(#arrowhead)" id="arr-qd"/>
+
+    <!-- Sink boxes -->
+    <g id="g-sinks">
+      <rect x="770" y="40" width="120" height="55" rx="8" fill="#1a1d27" stroke="#2e3345" stroke-width="2" id="sink-console"/>
+      <text x="830" y="63" text-anchor="middle" fill="#4ade80" font-size="12" font-weight="700">ConsoleLogger</text>
+      <text x="830" y="80" text-anchor="middle" fill="#546e7a" font-size="10">System.out</text>
+
+      <rect x="770" y="115" width="120" height="55" rx="8" fill="#1a1d27" stroke="#2e3345" stroke-width="2" id="sink-file"/>
+      <text x="830" y="138" text-anchor="middle" fill="#fb923c" font-size="12" font-weight="700">FileLogger</text>
+      <text x="830" y="155" text-anchor="middle" fill="#546e7a" font-size="10">BufferedWriter</text>
+
+      <rect x="770" y="190" width="120" height="55" rx="8" fill="#1a1d27" stroke="#2e3345" stroke-width="2" id="sink-future" stroke-dasharray="6,4"/>
+      <text x="830" y="213" text-anchor="middle" fill="#546e7a" font-size="12" font-weight="600">Future Sink</text>
+      <text x="830" y="230" text-anchor="middle" fill="#546e7a" font-size="10">(DB, Remote...)</text>
+    </g>
+
+    <!-- Arrows: dispatcher -> sinks -->
+    <line x1="715" y1="110" x2="770" y2="67" stroke="#2e3345" stroke-width="2" id="arr-ds1"/>
+    <line x1="715" y1="125" x2="770" y2="142" stroke="#2e3345" stroke-width="2" id="arr-ds2"/>
+    <line x1="715" y1="140" x2="770" y2="217" stroke="#2e3345" stroke-width="2" stroke-dasharray="6,4" id="arr-ds3"/>
+
+    <!-- Arrowhead marker -->
+    <defs>
+      <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+        <polygon points="0 0, 10 3.5, 0 7" fill="#6c8cff"/>
+      </marker>
+    </defs>
+
+    <!-- Animated log message dot -->
+    <circle r="6" fill="#6c8cff" opacity="0" id="msg-dot">
+      <animateMotion id="dot-anim" dur="3s" repeatCount="indefinite" fill="freeze" begin="indefinite">
+        <mpath href="#msg-path"/>
+      </animateMotion>
+    </circle>
+    <path id="msg-path" d="M70,125 L250,125 L450,125 L650,125 L830,67" fill="none" stroke="none"/>
+
+    <!-- Labels row -->
+    <text x="70" y="290" text-anchor="middle" fill="#8b90a0" font-size="11" font-weight="600">PRODUCERS</text>
+    <text x="250" y="290" text-anchor="middle" fill="#8b90a0" font-size="11" font-weight="600">LOGGER</text>
+    <text x="450" y="290" text-anchor="middle" fill="#8b90a0" font-size="11" font-weight="600">QUEUE</text>
+    <text x="650" y="290" text-anchor="middle" fill="#8b90a0" font-size="11" font-weight="600">DISPATCHER</text>
+    <text x="830" y="290" text-anchor="middle" fill="#8b90a0" font-size="11" font-weight="600">SINKS</text>
+
+    <!-- Description text -->
+    <text x="450" y="315" text-anchor="middle" fill="#546e7a" font-size="12" id="anim-desc">Click a stage above to highlight it</text>
+  </svg>
+</div>
+
+<!-- 3. Design Patterns -->
+<h2 id="patterns">3. Design Patterns Used</h2>
+
+<div class="card-grid">
+  <div class="card">
+    <h3><span class="badge badge-singleton">Singleton</span> Logger</h3>
+    <p>Only one Logger instance exists across the entire application. Uses <strong>double-checked locking</strong> with <code>synchronized(Logger.class)</code> for thread-safe lazy initialization.</p>
+    <p><strong>Why?</strong> Multiple Logger instances would mean multiple queues, inconsistent filtering, and resource duplication.</p>
+    <pre><code><span class="kw">if</span>(INSTANCE == <span class="kw">null</span>) {
+    <span class="kw">synchronized</span>(Logger.<span class="kw">class</span>) {
+        <span class="kw">if</span>(INSTANCE == <span class="kw">null</span>) {
+            INSTANCE = <span class="kw">new</span> <span class="type">Logger</span>();
+        }
+    }
+}</code></pre>
+  </div>
+
+  <div class="card">
+    <h3><span class="badge badge-strategy">Strategy</span> LogSink Interface</h3>
+    <p>Each destination implements <code>LogSink.log()</code> differently. The dispatcher doesn't care <strong>how</strong> a sink writes -- it just calls the interface method.</p>
+    <p><strong>Why?</strong> Open/Closed Principle. Adding a new sink (e.g., <code>DatabaseLogger</code>) requires zero changes to Logger or Dispatcher.</p>
+    <pre><code><span class="kw">interface</span> <span class="type">LogSink</span> {
+    <span class="kw">void</span> <span class="fn">log</span>(<span class="type">LogMessage</span> message);
+}</code></pre>
+  </div>
+
+  <div class="card">
+    <h3><span class="badge badge-observer">Pub-Sub</span> Dispatcher Fan-out</h3>
+    <p>LogDispatcher takes one message and <strong>fans it out to all registered sinks</strong>. Sinks don't know about each other or the queue.</p>
+    <p><strong>Why?</strong> Decouples producers from consumers. The Logger doesn't need to know how many sinks exist or what they do.</p>
+    <pre><code><span class="kw">for</span>(<span class="type">LogSink</span> sink : list) {
+    sink.<span class="fn">log</span>(message);
+}</code></pre>
+  </div>
+
+  <div class="card">
+    <h3><span class="badge badge-producer">Producer-Consumer</span> Queue</h3>
+    <p>Caller threads <strong>produce</strong> messages into a <code>LinkedBlockingQueue</code>. The dispatcher thread <strong>consumes</strong> them asynchronously.</p>
+    <p><strong>Why?</strong> Decouples the speed of logging from the speed of writing. Callers never block on I/O.</p>
+    <pre><code><span class="cm">// Producer (any thread)</span>
+queue.<span class="fn">add</span>(logMessage);
+
+<span class="cm">// Consumer (dispatcher thread)</span>
+<span class="type">LogMessage</span> msg = queue.<span class="fn">take</span>();</code></pre>
+  </div>
+</div>
+
+<!-- 4. Queue Choice -->
+<h2 id="queue">4. Queue Choice: Why LinkedBlockingQueue?</h2>
+
+<p>We evaluated three queue types before settling on <code>LinkedBlockingQueue</code>:</p>
+
+<table>
+  <tr>
+    <th>Property</th>
+    <th>LinkedList / ArrayDeque</th>
+    <th>ConcurrentLinkedQueue</th>
+    <th>LinkedBlockingQueue</th>
+  </tr>
+  <tr>
+    <td><strong>Thread-safe?</strong></td>
+    <td style="color:var(--red)">No</td>
+    <td style="color:var(--green)">Yes (lock-free)</td>
+    <td style="color:var(--green)">Yes (lock-based)</td>
+  </tr>
+  <tr>
+    <td><strong>Blocking take()?</strong></td>
+    <td style="color:var(--red)">No</td>
+    <td style="color:var(--red)">No -- poll() returns null</td>
+    <td style="color:var(--green)">Yes -- take() blocks until available</td>
+  </tr>
+  <tr>
+    <td><strong>Consumer behavior when empty</strong></td>
+    <td>Crashes or busy-loops</td>
+    <td>Busy-loops (wastes CPU)</td>
+    <td>Sleeps efficiently (no CPU waste)</td>
+  </tr>
+  <tr>
+    <td><strong>Bounded capacity?</strong></td>
+    <td>No</td>
+    <td>No</td>
+    <td>Optional (can set max size)</td>
+  </tr>
+  <tr>
+    <td><strong>Best for</strong></td>
+    <td>Single-threaded use</td>
+    <td>High-throughput, non-blocking reads</td>
+    <td style="color:var(--accent);font-weight:600">Producer-consumer with blocking</td>
+  </tr>
+</table>
+
+<div class="card">
+  <h3>The Key Insight</h3>
+  <p>The consumer thread needs to <strong>wait efficiently</strong> when no logs are available. With <code>ConcurrentLinkedQueue</code>, the consumer would need a <code>while(true) { poll(); }</code> busy-loop, wasting CPU cycles. <code>LinkedBlockingQueue.take()</code> uses <strong>OS-level wait/notify</strong> -- the thread sleeps with zero CPU usage until a producer adds a message.</p>
+  <p>Additionally, <code>LinkedBlockingQueue</code> supports an optional <strong>bounded capacity</strong>, which acts as backpressure: if the queue fills up, producers block on <code>put()</code> instead of producing infinitely and causing an OOM.</p>
+</div>
+
+<!-- Queue Animation -->
+<h3>Queue Animation</h3>
+<p>Watch messages flow through the blocking queue:</p>
+<div class="demo-area">
+  <div class="hld-controls">
+    <button class="hld-btn" onclick="queueProduce()">Produce Message</button>
+    <button class="hld-btn" onclick="queueConsume()">Consume (take)</button>
+    <button class="hld-btn" onclick="queueReset()">Reset</button>
+  </div>
+  <div style="display:flex;align-items:center;gap:1rem;flex-wrap:wrap;">
+    <div style="text-align:center">
+      <div style="color:var(--accent);font-size:.8rem;font-weight:600;margin-bottom:6px">PRODUCERS</div>
+      <div style="color:var(--text-muted);font-size:.75rem">add()</div>
+    </div>
+    <span class="queue-arrow">--></span>
+    <div class="queue-viz" id="queue-viz">
+      <div class="queue-slot" id="qslot-0">empty</div>
+      <div class="queue-slot" id="qslot-1">empty</div>
+      <div class="queue-slot" id="qslot-2">empty</div>
+      <div class="queue-slot" id="qslot-3">empty</div>
+      <div class="queue-slot" id="qslot-4">empty</div>
+    </div>
+    <span class="queue-arrow">--></span>
+    <div style="text-align:center">
+      <div style="color:var(--green);font-size:.8rem;font-weight:600;margin-bottom:6px">CONSUMER</div>
+      <div style="color:var(--text-muted);font-size:.75rem">take()</div>
+    </div>
+  </div>
+  <div id="queue-status" style="margin-top:1rem;color:var(--text-muted);font-size:.82rem;min-height:20px;"></div>
+</div>
+
+<!-- 5. Class Breakdown -->
+<h2 id="classes">5. Class-by-Class Breakdown</h2>
+
+<h3>LogLevel.java</h3>
+<div class="card">
+  <p>Enum with <strong>numeric priority</strong>. Lower number = higher severity. Used by <code>Logger.filter()</code> to compare against the configured threshold.</p>
+  <pre><code><span class="kw">enum</span> <span class="type">LogLevel</span> {
+    <span class="fn">DEBUG</span>(<span class="num">5</span>), <span class="fn">INFO</span>(<span class="num">4</span>), <span class="fn">WARN</span>(<span class="num">3</span>), <span class="fn">ERROR</span>(<span class="num">2</span>), <span class="fn">FATAL</span>(<span class="num">1</span>);
+
+    <span class="kw">public final int</span> level;
+    <span class="type">LogLevel</span>(<span class="kw">int</span> level) { <span class="kw">this</span>.level = level; }
+}</code></pre>
+  <p><strong>Filtering logic:</strong> If <code>logLevelFilter = WARN (3)</code>, then only levels with <code>level &lt;= 3</code> pass through (WARN, ERROR, FATAL). DEBUG(5) and INFO(4) are filtered out because <code>3 >= 5</code> is false.</p>
+</div>
+
+<h3>LogMessage.java</h3>
+<div class="card">
+  <p>Immutable data object carrying all log metadata. Created fresh per log call -- <strong>no shared state</strong>.</p>
+  <pre><code><span class="kw">class</span> <span class="type">LogMessage</span> {
+    <span class="kw">private</span> <span class="type">LogLevel</span> logLevel;
+    <span class="kw">private</span> <span class="type">String</span> message;
+    <span class="kw">private</span> <span class="type">String</span> TAG;          <span class="cm">// Source class name</span>
+    <span class="kw">private</span> <span class="type">LocalDateTime</span> time;  <span class="cm">// Captured at creation</span>
+    <span class="cm">// constructor + getters</span>
+}</code></pre>
+</div>
+
+<h3>Logger.java</h3>
+<div class="card">
+  <p><strong>Singleton</strong> entry point. Provides static methods <code>d()</code>, <code>i()</code>, <code>w()</code>, <code>e()</code>, <code>f()</code>. Each method:</p>
+  <ol>
+    <li>Checks the level filter</li>
+    <li>Creates a <code>LogMessage</code> <strong>locally</strong> (no shared field)</li>
+    <li>Adds it to the <code>LinkedBlockingQueue</code></li>
+  </ol>
+  <pre><code><span class="kw">public static void</span> <span class="fn">d</span>(<span class="type">String</span> message, <span class="type">String</span> TAG) {
+    <span class="kw">if</span>(<span class="fn">filter</span>(LogLevel.DEBUG)) {
+        <span class="fn">addToMessageQueue</span>(<span class="kw">new</span> <span class="type">LogMessage</span>(LogLevel.DEBUG, message, TAG));
+    }
+}</code></pre>
+  <p><strong>Key decision:</strong> No <code>synchronized</code> on log methods. The queue is thread-safe, and LogMessage is created locally per call -- no contention.</p>
+</div>
+
+<h3>LogSink.java</h3>
+<div class="card">
+  <p>Single-method interface. Each destination implements this differently.</p>
+  <pre><code><span class="kw">interface</span> <span class="type">LogSink</span> {
+    <span class="kw">void</span> <span class="fn">log</span>(<span class="type">LogMessage</span> message);
+}</code></pre>
+</div>
+
+<h3>FileLogger.java</h3>
+<div class="card">
+  <p>Writes to a file using <code>BufferedWriter</code> with <strong>try-with-resources</strong> (auto-close). Opens in append mode.</p>
+  <pre><code><span class="kw">class</span> <span class="type">FileLogger</span> <span class="kw">implements</span> <span class="type">LogSink</span> {
+    <span class="kw">private</span> <span class="type">File</span> file;
+    <span class="ann">@Override</span>
+    <span class="kw">public void</span> <span class="fn">log</span>(<span class="type">LogMessage</span> message) {
+        <span class="kw">try</span> (<span class="type">BufferedWriter</span> writer = <span class="kw">new</span> <span class="type">BufferedWriter</span>(
+                <span class="kw">new</span> <span class="type">FileWriter</span>(file, <span class="kw">true</span>))) {
+            writer.<span class="fn">write</span>(<span class="cm">/* formatted message */</span>);
+            writer.<span class="fn">newLine</span>();
+            writer.<span class="fn">flush</span>();
+        }
+    }
+}</code></pre>
+</div>
+
+<h3>ConsoleLogger.java</h3>
+<div class="card">
+  <p>Simplest sink -- just prints to stdout.</p>
+  <pre><code><span class="kw">class</span> <span class="type">ConsoleLogger</span> <span class="kw">implements</span> <span class="type">LogSink</span> {
+    <span class="ann">@Override</span>
+    <span class="kw">public void</span> <span class="fn">log</span>(<span class="type">LogMessage</span> message) {
+        System.out.<span class="fn">println</span>(<span class="cm">/* formatted message */</span>);
+    }
+}</code></pre>
+</div>
+
+<h3>LogDispatcher.java</h3>
+<div class="card">
+  <p>The <strong>heart of the system</strong>. Owns the consumer thread, takes from the queue, fans out to all sinks.</p>
+  <pre><code><span class="kw">class</span> <span class="type">LogDispatcher</span> {
+    <span class="kw">private</span> <span class="type">LinkedBlockingQueue</span>&lt;<span class="type">LogMessage</span>&gt; queue;
+    <span class="kw">private</span> <span class="type">ExecutorService</span> service;
+    <span class="type">List</span>&lt;<span class="type">LogSink</span>&gt; list;
+
+    <span class="type">LogDispatcher</span>(<span class="type">Logger</span> logger, <span class="type">ExecutorService</span> service, <span class="type">List</span>&lt;<span class="type">LogSink</span>&gt; list) {
+        <span class="kw">this</span>.queue = logger.<span class="fn">getQueue</span>();
+        <span class="kw">this</span>.service = service;
+        service.<span class="fn">submit</span>(() -> <span class="fn">consumer</span>());
+        <span class="kw">this</span>.list = list;
+    }
+
+    <span class="kw">public void</span> <span class="fn">consumer</span>() {
+        <span class="kw">while</span>(<span class="kw">true</span>) {
+            <span class="type">LogMessage</span> message = queue.<span class="fn">take</span>();  <span class="cm">// blocks until available</span>
+            <span class="kw">for</span>(<span class="type">LogSink</span> sink : list) {
+                <span class="kw">try</span> {
+                    sink.<span class="fn">log</span>(message);
+                } <span class="kw">catch</span>(<span class="type">Exception</span> e) {
+                    System.out.<span class="fn">println</span>(e.<span class="fn">getMessage</span>());
+                }
+            }
+        }
+    }
+}</code></pre>
+  <p><strong>Key decisions:</strong></p>
+  <ul>
+    <li><code>take()</code> blocks efficiently -- no CPU waste when idle</li>
+    <li>Try-catch <strong>inside</strong> the for-loop so one failing sink doesn't skip others</li>
+    <li>InterruptedException triggers graceful shutdown</li>
+  </ul>
+</div>
+
+<!-- 6. End-to-End Flow -->
+<h2 id="flow">6. End-to-End Flow</h2>
+
+<div class="card">
+  <div class="flow-step">
+    <div class="flow-num">1</div>
+    <div class="flow-content">
+      <strong>Application calls <code>Logger.d("User logged in", "AuthService")</code></strong>
+      <p>Any thread, any class. Static method -- no instance needed after init.</p>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num">2</div>
+    <div class="flow-content">
+      <strong>Logger.filter() checks level</strong>
+      <p>If <code>logLevelFilter = WARN(3)</code> and DEBUG = 5, then <code>3 >= 5</code> is false. Message is <strong>dropped</strong>. No object creation, no queue overhead.</p>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num">3</div>
+    <div class="flow-content">
+      <strong>If passes filter: create LogMessage locally</strong>
+      <p><code>new LogMessage(LogLevel.DEBUG, message, TAG)</code> -- captures timestamp at this moment. Stack-local, no shared state.</p>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num">4</div>
+    <div class="flow-content">
+      <strong>Add to LinkedBlockingQueue</strong>
+      <p>Thread-safe <code>queue.add()</code>. Caller thread <strong>returns immediately</strong>. Zero I/O on the caller's thread.</p>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num">5</div>
+    <div class="flow-content">
+      <strong>Dispatcher's consumer thread wakes up</strong>
+      <p><code>queue.take()</code> was blocking -- now it returns the message. Runs on a separate thread in the ExecutorService.</p>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num">6</div>
+    <div class="flow-content">
+      <strong>Fan-out to all registered sinks</strong>
+      <p>Iterates over <code>List&lt;LogSink&gt;</code> -- calls <code>sink.log(message)</code> on each. FileLogger writes to disk, ConsoleLogger prints to stdout.</p>
+    </div>
+  </div>
+</div>
+
+<!-- 7. Interactive Demo -->
+<h2 id="demo">7. Interactive Demo</h2>
+<p>Try logging at different levels and change the filter to see which messages pass through.</p>
+
+<div class="demo-area">
+  <div class="demo-controls">
+    <label style="color:var(--text-muted);font-size:.85rem;margin-right:.5rem;align-self:center">Filter Level:</label>
+    <select class="demo-select" id="demo-filter" onchange="updateFilter()">
+      <option value="5">DEBUG (all logs)</option>
+      <option value="4">INFO</option>
+      <option value="3" selected>WARN</option>
+      <option value="2">ERROR</option>
+      <option value="1">FATAL (only fatal)</option>
+    </select>
+    <button class="demo-btn" style="background:var(--surface2);color:var(--text-muted);margin-left:auto;" onclick="clearLogs()">Clear</button>
+  </div>
+  <div class="demo-controls">
+    <button class="demo-btn debug" onclick="addLog('DEBUG',5)">Logger.d()</button>
+    <button class="demo-btn info" onclick="addLog('INFO',4)">Logger.i()</button>
+    <button class="demo-btn warn" onclick="addLog('WARN',3)">Logger.w()</button>
+    <button class="demo-btn error" onclick="addLog('ERROR',2)">Logger.e()</button>
+    <button class="demo-btn fatal" onclick="addLog('FATAL',1)">Logger.f()</button>
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem">
+    <div>
+      <div style="color:var(--green);font-size:.8rem;font-weight:600;margin-bottom:.5rem">Console Sink Output</div>
+      <div class="log-output" id="console-output"></div>
+    </div>
+    <div>
+      <div style="color:var(--orange);font-size:.8rem;font-weight:600;margin-bottom:.5rem">File Sink Output</div>
+      <div class="log-output" id="file-output"></div>
+    </div>
+  </div>
+</div>
+
+<!-- 8. Trade-offs -->
+<h2 id="tradeoffs">8. Trade-offs & Interview Talking Points</h2>
+
+<div class="card-grid">
+  <div class="card">
+    <h3>Why not synchronize log methods?</h3>
+    <p>Initially we had <code>synchronized</code> on <code>d()</code>, <code>i()</code>, etc. This meant every caller thread would <strong>contend on the same lock</strong> even though they have no shared state. By creating <code>LogMessage</code> locally and using a thread-safe queue, we eliminated the need for any lock on the hot path.</p>
+  </div>
+  <div class="card">
+    <h3>Why not one queue per sink?</h3>
+    <p>Multiple queues means the Logger must know about every sink. Adding a new sink requires changing Logger. The <strong>dispatcher pattern</strong> gives us a single queue with fan-out -- Logger stays unchanged regardless of how many sinks exist.</p>
+  </div>
+  <div class="card">
+    <h3>Single consumer thread limitation</h3>
+    <p>Currently one thread dispatches to all sinks <strong>sequentially</strong>. If FileLogger is slow, ConsoleLogger waits. For production, you could dispatch to sinks <strong>in parallel</strong> using the ExecutorService, or give each sink its own queue + consumer.</p>
+  </div>
+  <div class="card">
+    <h3>File open/close per message</h3>
+    <p>FileLogger opens a new <code>BufferedWriter</code> for each log line (try-with-resources). This is safe but slow for high throughput. An optimization: keep the writer open as a field and flush periodically, or use a <code>FileChannel</code> with memory-mapped I/O.</p>
+  </div>
+  <div class="card">
+    <h3>Unbounded queue risk</h3>
+    <p><code>LinkedBlockingQueue</code> without a capacity is unbounded. If producers are faster than consumers, the queue grows indefinitely causing <strong>OOM</strong>. Fix: pass a capacity like <code>new LinkedBlockingQueue&lt;&gt;(10000)</code> and use <code>put()</code> to apply backpressure.</p>
+  </div>
+  <div class="card">
+    <h3>Graceful shutdown</h3>
+    <p>The <code>while(true)</code> consumer loop needs a clean exit path. When <code>InterruptedException</code> is caught (from <code>take()</code>), the service shuts down. In production, you'd also want to <strong>drain the queue</strong> before exiting so no logs are lost.</p>
+  </div>
+</div>
+
+<div class="card" style="border-color:var(--accent)">
+  <h3>Bootstrap Example (Main.java)</h3>
+  <pre><code><span class="kw">public class</span> <span class="type">Main</span> {
+    <span class="kw">public static void</span> <span class="fn">main</span>(<span class="type">String</span>[] args) {
+        <span class="cm">// 1. Create shared queue</span>
+        <span class="type">LinkedBlockingQueue</span>&lt;<span class="type">LogMessage</span>&gt; queue = <span class="kw">new</span> <span class="type">LinkedBlockingQueue</span>&lt;&gt;();
+
+        <span class="cm">// 2. Initialize singleton logger</span>
+        <span class="type">Logger</span> logger = <span class="type">Logger</span>.<span class="fn">instance</span>(LogLevel.WARN, queue);
+
+        <span class="cm">// 3. Create sinks</span>
+        <span class="type">List</span>&lt;<span class="type">LogSink</span>&gt; sinks = <span class="type">List</span>.<span class="fn">of</span>(
+            <span class="kw">new</span> <span class="type">ConsoleLogger</span>(),
+            <span class="kw">new</span> <span class="type">FileLogger</span>(<span class="str">"/var/log/app.log"</span>)
+        );
+
+        <span class="cm">// 4. Start dispatcher (consumer thread begins immediately)</span>
+        <span class="type">ExecutorService</span> service = <span class="type">Executors</span>.<span class="fn">newSingleThreadExecutor</span>();
+        <span class="kw">new</span> <span class="type">LogDispatcher</span>(logger, service, sinks);
+
+        <span class="cm">// 5. Use from anywhere</span>
+        <span class="type">Logger</span>.<span class="fn">w</span>(<span class="str">"Connection timeout"</span>, <span class="str">"HttpClient"</span>);   <span class="cm">// passes filter</span>
+        <span class="type">Logger</span>.<span class="fn">d</span>(<span class="str">"Cache hit ratio: 92%"</span>, <span class="str">"CacheService"</span>); <span class="cm">// filtered out</span>
+        <span class="type">Logger</span>.<span class="fn">e</span>(<span class="str">"Null pointer in handler"</span>, <span class="str">"ApiGateway"</span>); <span class="cm">// passes filter</span>
+    }
+}</code></pre>
+</div>
+
+<div style="text-align:center;padding:3rem 0 2rem;color:var(--text-muted);font-size:.85rem;">
+  Built during a system design mock interview session.
+</div>
+
+</div>
+
+<script>
+// ========== HLD Animation ==========
+const highlights = {
+  idle: { els: [], desc: 'Click a stage above to highlight it' },
+  produce: {
+    els: ['prod1','prod2','prod3','arr-t1','arr-t2','arr-t3','logger-box'],
+    desc: 'Multiple threads call Logger.d(), Logger.w() etc. Logger filters and creates LogMessage locally.'
+  },
+  queue: {
+    els: ['logger-box','arr-lq','queue-box','qs1','qs2','qs3'],
+    desc: 'LogMessage is added to LinkedBlockingQueue. Thread-safe, non-blocking for producers.'
+  },
+  dispatch: {
+    els: ['queue-box','arr-qd','dispatch-box'],
+    desc: 'Dispatcher calls queue.take() which blocks until a message arrives. Zero CPU waste when idle.'
+  },
+  sink: {
+    els: ['dispatch-box','arr-ds1','arr-ds2','arr-ds3','sink-console','sink-file','sink-future'],
+    desc: 'Dispatcher fans out each message to ALL registered LogSink implementations.'
+  },
+  full: {
+    els: ['prod1','prod2','prod3','arr-t1','arr-t2','arr-t3','logger-box','arr-lq','queue-box','qs1','qs2','qs3','arr-qd','dispatch-box','arr-ds1','arr-ds2','sink-console','sink-file'],
+    desc: 'Full flow: Thread -> Logger (filter + create) -> BlockingQueue -> Dispatcher (take) -> All Sinks'
+  }
+};
+
+function setAnimState(state) {
+  // Reset all
+  document.querySelectorAll('.arch-svg rect, .arch-svg line').forEach(el => {
+    el.setAttribute('stroke', '#2e3345');
+    el.style.filter = '';
+  });
+  document.querySelectorAll('.hld-btn').forEach(b => b.classList.remove('active'));
+  event.target.classList.add('active');
+
+  const h = highlights[state];
+  h.els.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) {
+      if (el.tagName === 'rect') {
+        el.setAttribute('stroke', '#6c8cff');
+        el.style.filter = 'drop-shadow(0 0 6px #6c8cff44)';
+      } else if (el.tagName === 'line') {
+        el.setAttribute('stroke', '#6c8cff');
+      }
+    }
+  });
+  document.getElementById('anim-desc').textContent = h.desc;
+
+  // Animate dot for full flow
+  const dot = document.getElementById('msg-dot');
+  if (state === 'full') {
+    dot.setAttribute('opacity', '1');
+    document.getElementById('dot-anim').beginElement();
+  } else {
+    dot.setAttribute('opacity', '0');
+  }
+}
+
+// ========== Queue Animation ==========
+let queueState = [];
+const maxSlots = 5;
+const logTypes = ['DEBUG', 'INFO', 'WARN', 'ERROR', 'FATAL'];
+
+function queueProduce() {
+  if (queueState.length >= maxSlots) {
+    document.getElementById('queue-status').innerHTML = '<span style="color:var(--red)">Queue full! Consumer needs to take() before more can be added. (Backpressure)</span>';
+    return;
+  }
+  const type = logTypes[Math.floor(Math.random() * logTypes.length)];
+  queueState.push(type);
+  renderQueue();
+  document.getElementById('queue-status').innerHTML = `<span style="color:var(--accent)">Produced: ${type} message. Queue size: ${queueState.length}</span>`;
+}
+
+function queueConsume() {
+  if (queueState.length === 0) {
+    document.getElementById('queue-status').innerHTML = '<span style="color:var(--yellow)">Queue empty! take() is BLOCKING -- consumer thread sleeps until a message arrives.</span>';
+    return;
+  }
+  const msg = queueState.shift();
+  // Brief highlight
+  renderQueue('consuming');
+  setTimeout(() => renderQueue(), 400);
+  document.getElementById('queue-status').innerHTML = `<span style="color:var(--green)">Consumed: ${msg} -> dispatched to ConsoleLogger + FileLogger. Queue size: ${queueState.length}</span>`;
+}
+
+function queueReset() {
+  queueState = [];
+  renderQueue();
+  document.getElementById('queue-status').innerHTML = '';
+}
+
+function renderQueue(mode) {
+  for (let i = 0; i < maxSlots; i++) {
+    const slot = document.getElementById('qslot-' + i);
+    if (i < queueState.length) {
+      slot.textContent = queueState[i];
+      slot.className = 'queue-slot ' + (mode === 'consuming' && i === 0 ? 'consuming' : 'filled');
+    } else {
+      slot.textContent = 'empty';
+      slot.className = 'queue-slot';
+    }
+  }
+}
+
+// ========== Interactive Demo ==========
+let filterLevel = 3;
+let logCounter = 0;
+const sampleMessages = [
+  'Cache hit ratio: 92%', 'User session started', 'DB connection pool: 8/10',
+  'Request processed in 45ms', 'Retrying failed request', 'Config file loaded',
+  'Connection timeout after 30s', 'Null pointer in handler', 'Memory usage: 78%',
+  'Service shutting down', 'Auth token expired', 'Rate limit exceeded',
+  'Disk space low: 5% remaining', 'Unhandled exception in worker', 'System crash detected'
+];
+const sampleTags = ['AuthService', 'HttpClient', 'CacheService', 'ApiGateway', 'DBPool', 'Scheduler', 'Worker'];
+
+function updateFilter() {
+  filterLevel = parseInt(document.getElementById('demo-filter').value);
+}
+
+function addLog(level, levelNum) {
+  logCounter++;
+  const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
+  const msg = sampleMessages[Math.floor(Math.random() * sampleMessages.length)];
+  const tag = sampleTags[Math.floor(Math.random() * sampleTags.length)];
+  const formatted = `${now} ${level.padEnd(5)} [${tag}] ${msg}`;
+  const cls = level.toLowerCase();
+
+  if (filterLevel >= levelNum) {
+    // Passes filter -- show in both sinks
+    appendToOutput('console-output', formatted, cls);
+    appendToOutput('file-output', formatted, cls);
+  } else {
+    // Filtered out
+    appendToOutput('console-output', `FILTERED: ${level} (filter=${getFilterName()})`, 'filtered');
+  }
+}
+
+function getFilterName() {
+  const names = {5:'DEBUG',4:'INFO',3:'WARN',2:'ERROR',1:'FATAL'};
+  return names[filterLevel];
+}
+
+function appendToOutput(id, text, cls) {
+  const el = document.getElementById(id);
+  const line = document.createElement('div');
+  line.className = 'log-line ' + cls;
+  line.textContent = text;
+  el.appendChild(line);
+  el.scrollTop = el.scrollHeight;
+}
+
+function clearLogs() {
+  document.getElementById('console-output').innerHTML = '';
+  document.getElementById('file-output').innerHTML = '';
+}
+</script>
+</body>
+</html>
